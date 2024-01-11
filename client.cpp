@@ -643,7 +643,7 @@ void sendMove(int client_socket, int n, sf::Vector2f oldPos, sf::Vector2f newPos
     std::cout << json_string << std::endl;
     send(client_socket, json_string.c_str(), json_string.length(), 0);
     awaitingResponse = true;
-    messageSent = true;
+    messageSent = false;
     cout << "send" << endl;
 }
 void PlayBlack(int client_socket)
@@ -1046,6 +1046,21 @@ void challenge_player(int client_socket)
     send(client_socket, json_string.c_str(), json_string.length(), 0);
 }
 
+void chat_player(int client_socket)
+{
+    Json::Value root;
+    root["type"] = CHAT;
+    root["from_user_id"] = USER_ID;
+    std::cout << "Player id: ";
+    int player_id;
+    std::cin >> player_id;
+    root["to_user_id"] = player_id;
+    Json::StreamWriterBuilder builder;
+    const std::string json_string = Json::writeString(builder, root);
+    // cout << "json string" << json_string << endl;
+    send(client_socket, json_string.c_str(), json_string.length(), 0);
+}
+
 void *sendMsg(void *arg)
 {
     int sockfd = *(int *)arg;
@@ -1130,8 +1145,11 @@ void *sendMsg(void *arg)
             case 4:
                 challenge_player(sockfd);
                 break;
+            // case 5:
+            //     // view_challenger(sockfd);
+            //     break;
             case 5:
-                // view_rank(sockfd);
+                // view_challenger(sockfd);
                 break;
             case 6:
                 // view_history(sockfd);
@@ -1157,6 +1175,9 @@ void *receiveMsg(void *arg)
 
     while (true)
     {
+        unique_lock<mutex> lock(mtx);
+        cv.wait(lock, []
+                { return messageSent; });
         char buffer[1024] = {0};
         int valread = read(sockfd, buffer, 1024);
         if (valread == 0)
@@ -1169,109 +1190,133 @@ void *receiveMsg(void *arg)
             std::cout << "Error receiving message" << std::endl;
             break;
         }
-        else
+        Json::Value jobj;
+        Json::CharReaderBuilder builder;
+        const std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
+        std::string errors;
+        bool parsingSuccessful = reader->parse(buffer, buffer + strlen(buffer), &jobj, &errors);
+        if (!parsingSuccessful)
         {
-            unique_lock<mutex> lock(mtx);
-            cv.wait(lock, []
-                    { return messageSent; });
-
-            Json::Value jobj;
-            Json::CharReaderBuilder builder;
-            const std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
-            std::string errors;
-            bool parsingSuccessful = reader->parse(buffer, buffer + strlen(buffer), &jobj, &errors);
-            if (!parsingSuccessful)
-            {
-                std::cout << "Error parsing JSON" << std::endl;
-                continue;
-            }
-            cout << "jobj" << jobj << endl;
-            int type = jobj["type"].asInt();
-            if (type == LOGIN)
-            {
-                int status = jobj["status"].asInt();
-                string message = jobj["message"].asCString();
-                cout << message << endl;
-                if (status == 1)
-                {
-                    is_login = 1;
-                    USER_ID = jobj["user_id"].asInt();
-                    USERNAME = jobj["username"].asCString();
-                    SCORE = jobj["score"].asInt();
-                    cout << USERNAME << " " << message << endl;
-                }
-                else
-                {
-                    cout << message << endl;
-                }
-            }
-            else if (type == REGISTER)
-            {
-                string message = jobj["message"].asCString();
-                cout << message << endl;
-            }
-            else if (type == LOGOUT)
-            {
-                string message = jobj["message"].asCString();
-                cout << message << endl;
-            }
-            else if (type == CREATE_ROOM)
-            {
-                int status = jobj["status"].asInt();
-                if (status == 1)
-                {
-                    ROOM_ID = jobj["room_id"].asInt();
-                    cout << "Create room successfully" << endl;
-                    cout << "Waiting other players to join room " << ROOM_ID << endl;
-                    PlayWhite(sockfd);
-                }
-            }
-            else if (type == NOTIFI_JOIN_ROOM)
-            {
-                cout << "type" << type << endl;
-                int status = jobj["status"].asInt();
-                if (status == 1)
-                {
-                    // int room_id = jobj["room_id"].asInt();
-                    USER_ID_COMPETIOR = jobj["white_user"]["user_id"].asInt();
-                    cout << "USER ID COMPETIOR" << USER_ID_COMPETIOR << endl;
-                    cout << "Join room successfully" << endl;
-                    PlayBlack(sockfd);
-                }
-            }
-
-            else if (type == GET_ROOM_LIST)
-            {
-                int status = jobj["status"].asInt();
-                if (status == 1)
-                {
-                    Json::Value room_list = jobj["room_list"];
-                    for (int i = 0; i < room_list.size(); i++)
-                    {
-                        cout << "Room " << i + 1 << ": " << room_list[i]["room_id"].asInt() << endl;
-                    }
-                }
-            }
-
-            else if (type == MOVE)
-            {
-                cout << "type " << type << endl;
-                int status = jobj["status"].asInt();
-                if (status == 1)
-                {
-                    // luu lai nuoc di cua doi thu
-                    int oldPos_x = jobj["oldPos_x"].asInt();
-                    int oldPos_y = jobj["oldPos_y"].asInt();
-                    sf::Vector2f oldPostemp = sf::Vector2f(oldPos_x, oldPos_y);
-                    int newPos_x = jobj["newPos_x"].asInt();
-                    int newPos_y = jobj["newPos_y"].asInt();
-                    sf::Vector2f newPostemp = sf::Vector2f(newPos_x, newPos_y);
-                }
-            }
-            messageSent = false;
-            awaitingResponse = false;
-            cv.notify_all();
+            std::cout << "Error parsing JSON" << std::endl;
+            continue;
         }
+        cout << "jobj" << jobj << endl;
+        int type = jobj["type"].asInt();
+        if (type == LOGIN)
+        {
+            int status = jobj["status"].asInt();
+            string message = jobj["message"].asCString();
+            cout << message << endl;
+            if (status == 1)
+            {
+                is_login = 1;
+                USER_ID = jobj["user_id"].asInt();
+                USERNAME = jobj["username"].asCString();
+                SCORE = jobj["score"].asInt();
+                cout << USERNAME << " " << message << endl;
+            }
+            else
+            {
+                cout << message << endl;
+            }
+        }
+        else if (type == REGISTER)
+        {
+            string message = jobj["message"].asCString();
+            cout << message << endl;
+        }
+        else if (type == LOGOUT)
+        {
+            string message = jobj["message"].asCString();
+            cout << message << endl;
+        }
+        else if (type == CREATE_ROOM)
+        {
+            int status = jobj["status"].asInt();
+            if (status == 1)
+            {
+                ROOM_ID = jobj["room_id"].asInt();
+                cout << "Create room successfully" << endl;
+                cout << "Waiting other players to join room " << ROOM_ID << endl;
+                PlayWhite(sockfd);
+            }
+        }
+        else if (type == NOTIFI_JOIN_ROOM)
+        {
+            cout << "type" << type << endl;
+            int status = jobj["status"].asInt();
+            if (status == 1)
+            {
+                // int room_id = jobj["room_id"].asInt();
+                USER_ID_COMPETIOR = jobj["white_user"]["user_id"].asInt();
+                cout << "USER ID COMPETIOR" << USER_ID_COMPETIOR << endl;
+                cout << "Join room successfully" << endl;
+                PlayBlack(sockfd);
+            }
+        }
+
+        else if (type == GET_ROOM_LIST)
+        {
+            int status = jobj["status"].asInt();
+            if (status == 1)
+            {
+                Json::Value room_list = jobj["room_list"];
+                for (int i = 0; i < room_list.size(); i++)
+                {
+                    cout << "Room " << i + 1 << ": " << room_list[i]["room_id"].asInt() << endl;
+                }
+            }
+        }
+
+        else if (type == MOVE)
+        {
+
+            // luu lai nuoc di cua doi thu
+            int oldPos_x = jobj["oldPos_x"].asInt();
+            int oldPos_y = jobj["oldPos_y"].asInt();
+            sf::Vector2f oldPostemp = sf::Vector2f(oldPos_x, oldPos_y);
+            int newPos_x = jobj["newPos_x"].asInt();
+            int newPos_y = jobj["newPos_y"].asInt();
+            sf::Vector2f newPostemp = sf::Vector2f(newPos_x, newPos_y);
+        }
+
+        else if (type == NOTIFI_CHALLENGE)
+        {
+            int from_user_id = jobj["from_user_id"].asInt();
+            // string from_username = jobj["from_username"].asCString();
+            cout << "Player " << from_user_id << " challenge you" << endl;
+            cout << "1. Accept" << endl;
+            cout << "2. Decline" << endl;
+            cout << "Your choice: ";
+            int choice;
+            cin >> choice;
+            if (choice == 1)
+            {
+                Json::Value root;
+                root["type"] = CHALLENGE;
+                root["from_user_id"] = from_user_id;
+                root["is_accept"] = 1;
+                root["to_user_id"] = USER_ID;
+                Json::StreamWriterBuilder builder;
+                const std::string json_string = Json::writeString(builder, root);
+                send(sockfd, json_string.c_str(), json_string.length(), 0);
+            }
+            else
+            {
+                Json::Value root;
+                root["type"] = CHALLENGE;
+                root["from_user_id"] = from_user_id;
+                root["is_accept"] = 0;
+                root["to_user_id"] = USER_ID;
+                Json::StreamWriterBuilder builder;
+                const std::string json_string = Json::writeString(builder, root);
+                send(sockfd, json_string.c_str(), json_string.length(), 0);
+            }
+        }
+
+        messageSent = false;
+        awaitingResponse = false;
+        cv.notify_all();
     }
     pthread_exit(NULL);
 }
@@ -1279,6 +1324,7 @@ void *receiveMsg(void *arg)
 int main()
 {
     pthread_t sendThread, receiveThread;
+    pthread_t playThread;
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0)
     {
@@ -1309,6 +1355,12 @@ int main()
         return 1;
     }
 
+    // if (pthread_create(&playThread, NULL, recvPlayThread, &sockfd))
+    // {
+    //     perror("Error creating play thread");
+    //     return 1;
+    // }
+
     if (pthread_join(sendThread, NULL))
     {
         perror("Error joining send thread");
@@ -1320,6 +1372,12 @@ int main()
         perror("Error joining receive thread");
         return 1;
     }
+
+    // if (pthread_join(playThread, NULL))
+    // {
+    //     perror("Error joining play thread");
+    //     return 1;
+    // }
 
     std::cout << "Both threads completed" << std::endl;
     close(sockfd);
